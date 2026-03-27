@@ -22,24 +22,24 @@ notion:
   api_key_env: NOTION_API_KEY       # Notion integration token
 
 provider:
-  type: openrouter
-  api_key_env: OPENROUTER_API_KEY
-  base_url: https://openrouter.ai/api/v1
+  type: anthropic                      # anthropic | openrouter
+  api_key_env: ANTHROPIC_API_KEY
+  # base_url: https://api.anthropic.com  # default, override for proxy
 
 models:
   haiku:
-    model: anthropic/claude-haiku-4-5
+    model: claude-haiku-4-5-20251001
     max_tokens: 1024
     cost_per_1k_input: 0.001
     cost_per_1k_output: 0.005
-  gpt-4o-mini:
-    model: openai/gpt-4o-mini
-    max_tokens: 1024
-    cost_per_1k_input: 0.00015
-    cost_per_1k_output: 0.0006
+  sonnet:
+    model: claude-sonnet-4-5-20250514
+    max_tokens: 2048
+    cost_per_1k_input: 0.003
+    cost_per_1k_output: 0.015
 
 roles:
-  classifier: gpt-4o-mini
+  classifier: haiku
   drafter: haiku
 
 budgets:

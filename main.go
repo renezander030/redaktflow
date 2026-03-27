@@ -528,6 +528,84 @@ func runPipeline(ctx context.Context, pipeline PipelineConfig, cfg Config, skill
 // --- LLM ---
 
 func callLLM(provider ProviderConfig, model ModelConfig, prompt string) (string, int, error) {
+	switch provider.Type {
+	case "anthropic":
+		return callAnthropic(provider, model, prompt)
+	default:
+		return callOpenAI(provider, model, prompt)
+	}
+}
+
+// callAnthropic calls the Claude Messages API directly.
+func callAnthropic(provider ProviderConfig, model ModelConfig, prompt string) (string, int, error) {
+	body := map[string]interface{}{
+		"model":      model.Model,
+		"max_tokens": model.MaxTokens,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+	}
+
+	data, err := json.Marshal(body)
+	if err != nil {
+		return "", 0, err
+	}
+
+	baseURL := provider.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.anthropic.com"
+	}
+	url := strings.TrimRight(baseURL, "/") + "/v1/messages"
+
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return "", 0, err
+	}
+
+	req.Header.Set("x-api-key", provider.apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("anthropic request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", 0, err
+	}
+
+	if resp.StatusCode != 200 {
+		return "", 0, fmt.Errorf("anthropic returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		Usage struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", 0, err
+	}
+
+	if len(result.Content) == 0 {
+		return "", 0, fmt.Errorf("anthropic returned no content")
+	}
+
+	totalTokens := result.Usage.InputTokens + result.Usage.OutputTokens
+	return result.Content[0].Text, totalTokens, nil
+}
+
+// callOpenAI calls any OpenAI-compatible API (OpenRouter, etc).
+func callOpenAI(provider ProviderConfig, model ModelConfig, prompt string) (string, int, error) {
 	body := map[string]interface{}{
 		"model":      model.Model,
 		"max_tokens": model.MaxTokens,
@@ -550,7 +628,7 @@ func callLLM(provider ProviderConfig, model ModelConfig, prompt string) (string,
 	req.Header.Set("Authorization", "Bearer "+provider.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", 0, fmt.Errorf("LLM request failed: %w", err)
