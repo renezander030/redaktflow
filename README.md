@@ -24,15 +24,68 @@ Runs as a CLI tool on your laptop or as a daemon on a server. No VPS required.
 git clone https://github.com/renezander030/redaktflow.git && cd redaktflow
 cp secrets.yaml.example secrets.yaml   # add your API keys
 go build -o redaktflow .
+```
 
-# Run a single pipeline and exit
+Three modes of operation:
+
+```bash
+# CLI — agent-callable subcommands, JSON output
+./redaktflow notion list-dbs
+./redaktflow make list-scenarios
+./redaktflow status
+
+# One-shot — run a single pipeline and exit
 ./redaktflow --run scenario-health
 
-# Or run as a daemon with scheduled pipelines
+# Daemon — scheduled pipelines on a loop
 ./redaktflow
+```
 
-# List available pipelines
-./redaktflow --list
+## CLI Reference
+
+Agent-first interface. Every command returns structured JSON. Use from scripts, Claude Code, or any agent harness.
+
+```bash
+# Notion
+./redaktflow notion list-dbs
+./redaktflow notion get-db --id <database_id>
+./redaktflow notion query --db <database_id> --filter '{"property":"Status","select":{"equals":"Draft"}}'
+./redaktflow notion create-db --parent <page_id> --name "Content Calendar" --props '{"Status":"select","Platform":"select","Date":"date"}'
+./redaktflow notion create-page --db <database_id> --props '{"Name":{"title":[{"text":{"content":"Post #1"}}]}}'
+./redaktflow notion update-page --id <page_id> --props '{"Status":{"select":{"name":"Published"}}}'
+
+# Make.com
+./redaktflow make list-scenarios
+./redaktflow make get-scenario --id <scenario_id>
+./redaktflow make get-blueprint --id <scenario_id>
+./redaktflow make set-blueprint --id <scenario_id> --file blueprint.json
+./redaktflow make create-scenario --name "Content Pipeline" --blueprint blueprint.json
+./redaktflow make run --id <scenario_id>
+./redaktflow make executions --id <scenario_id> --status error --limit 5
+./redaktflow make activate --id <scenario_id>
+
+# n8n
+./redaktflow n8n list-workflows
+./redaktflow n8n get-workflow --id <workflow_id>
+./redaktflow n8n executions --status error --limit 10
+./redaktflow n8n retry --id <execution_id>
+./redaktflow n8n activate --id <workflow_id>
+
+# Status — connection health for all platforms
+./redaktflow status
+
+# Help
+./redaktflow help
+```
+
+All commands return JSON:
+```json
+{
+  "ok": true,
+  "command": "notion list-dbs",
+  "data": [...],
+  "count": 3
+}
 ```
 
 Define your pipelines in `config.yaml`, your prompts in `skills/`, and RedaktFlow handles the rest.
@@ -183,7 +236,8 @@ output_schema:
 
 ```
 redaktflow/
-  main.go          # Engine: pipeline runner, CLI, scheduler, guardrails
+  main.go          # Engine: pipeline runner, scheduler, guardrails
+  cli.go           # Agent-callable subcommand interface (JSON output)
   make.go          # Make.com integration (scenarios, executions, blueprints)
   n8n.go           # n8n integration (workflows, executions, credentials)
   notion.go        # Notion integration (databases, pages, content calendar)

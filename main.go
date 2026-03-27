@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -631,47 +630,10 @@ func (s *Scheduler) GetDue() []PipelineConfig {
 	return due
 }
 
-// --- Main ---
+// --- Init ---
 
-func main() {
-	// CLI flags
-	configFlag := flag.String("config", "config.yaml", "path to config file")
-	runFlag := flag.String("run", "", "run a single pipeline by name and exit")
-	listFlag := flag.Bool("list", false, "list available pipelines and exit")
-	flag.Parse()
-
-	configPath := *configFlag
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		log.Fatalf("failed to read config: %v", err)
-	}
-
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		log.Fatalf("failed to parse config: %v", err)
-	}
-
-	// --- List mode ---
-	if *listFlag {
-		fmt.Printf("Available pipelines (%d):\n\n", len(cfg.Pipelines))
-		for _, p := range cfg.Pipelines {
-			fmt.Printf("  %-24s schedule: %s  steps: %d\n", p.Name, p.Schedule, len(p.Steps))
-		}
-		return
-	}
-
-	// Load secrets
-	cfg.Provider.apiKey = os.Getenv(cfg.Provider.APIKeyEnv)
-	if cfg.Provider.apiKey == "" {
-		log.Fatalf("provider API key env var %s not set", cfg.Provider.APIKeyEnv)
-	}
-
-	cfg.Telegram.token = os.Getenv(cfg.Telegram.TokenEnv)
-
-	// Load skills
-	skillsDir := filepath.Join(filepath.Dir(configPath), "skills")
-	skillReg, _ := loadSkills(skillsDir)
+func initConnectors(cfg Config) {
+	var err error
 
 	// Init Make.com connector
 	if cfg.Make.APIKeyEnv != "" {
@@ -705,6 +667,69 @@ func main() {
 			}
 		}
 	}
+}
+
+// --- Main ---
+
+func main() {
+	// Find config file — check --config flag or default
+	configPath := "config.yaml"
+	for i, arg := range os.Args {
+		if arg == "--config" && i+1 < len(os.Args) {
+			configPath = os.Args[i+1]
+			break
+		}
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Fatalf("failed to read config: %v", err)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		log.Fatalf("failed to parse config: %v", err)
+	}
+
+	// Init connectors (needed for both CLI and daemon modes)
+	initConnectors(cfg)
+
+	// --- CLI subcommand mode ---
+	if runCLI(os.Args, cfg) {
+		return
+	}
+
+	// --- Flag-based modes ---
+	runFlag := ""
+	listMode := false
+	for i, arg := range os.Args {
+		if arg == "--run" && i+1 < len(os.Args) {
+			runFlag = os.Args[i+1]
+		}
+		if arg == "--list" {
+			listMode = true
+		}
+	}
+
+	if listMode {
+		fmt.Printf("Available pipelines (%d):\n\n", len(cfg.Pipelines))
+		for _, p := range cfg.Pipelines {
+			fmt.Printf("  %-24s schedule: %s  steps: %d\n", p.Name, p.Schedule, len(p.Steps))
+		}
+		return
+	}
+
+	// Load secrets for LLM provider (only needed for pipeline modes)
+	cfg.Provider.apiKey = os.Getenv(cfg.Provider.APIKeyEnv)
+	if cfg.Provider.apiKey == "" {
+		log.Fatalf("provider API key env var %s not set", cfg.Provider.APIKeyEnv)
+	}
+
+	cfg.Telegram.token = os.Getenv(cfg.Telegram.TokenEnv)
+
+	// Load skills
+	skillsDir := filepath.Join(filepath.Dir(configPath), "skills")
+	skillReg, _ := loadSkills(skillsDir)
 
 	// Init operator channel
 	var ch OperatorChannel
@@ -716,22 +741,22 @@ func main() {
 		log.Printf("[telegram] operator channel configured")
 	} else {
 		log.Printf("[telegram] no token set — approval steps will timeout")
-		ch = &TelegramChannel{} // stub, approval steps will timeout
+		ch = &TelegramChannel{}
 	}
 
 	budget := &Budget{dayStart: time.Now()}
 
 	// --- One-shot mode ---
-	if *runFlag != "" {
+	if runFlag != "" {
 		var target *PipelineConfig
 		for i := range cfg.Pipelines {
-			if cfg.Pipelines[i].Name == *runFlag {
+			if cfg.Pipelines[i].Name == runFlag {
 				target = &cfg.Pipelines[i]
 				break
 			}
 		}
 		if target == nil {
-			log.Fatalf("pipeline %q not found. Use --list to see available pipelines.", *runFlag)
+			log.Fatalf("pipeline %q not found. Use --list to see available pipelines.", runFlag)
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
